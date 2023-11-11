@@ -7,7 +7,7 @@ import os
 import re
 import tarfile
 import tempfile
-from typing import List
+from typing import List, Tuple, Optional
 from zipfile import ZipFile
 
 import cv2
@@ -41,6 +41,7 @@ def face_mask_google_mediapipe(
         results_detection = face_detection.process(image_np)
         ih, iw, _ = image_np.shape
         if results_detection.detections:
+            this_im_masks = []
             for detection in results_detection.detections:
                 bboxC = detection.location_data.relative_bounding_box
 
@@ -137,43 +138,44 @@ def face_mask_google_mediapipe(
                     # Convert mask to 'L' mode (grayscale) before saving
                     mask = mask.convert("L")
 
-                    masks.append(mask)
+                    this_im_masks.append(mask)
                 else:
                     # If face landmarks are not available, add a black mask of the same size as the image
-                    masks.append(Image.new("L", (iw, ih), 255))
+                    this_im_masks.append(Image.new("L", (iw, ih), 255))
+            masks.append(this_im_masks)
 
         else:
             print("No face detected, adding full mask")
             # If no face is detected, add a white mask of the same size as the image
-            masks.append(Image.new("L", (iw, ih), 255))
+            masks.append([Image.new("L", (iw, ih), 255)])
 
     return masks
 
 
-# def _crop_to_square(
-#     image: Image.Image, com: List[Tuple[int, int]], resize_to: Optional[int] = None
-# ):
-#     cx, cy = com
-#     width, height = image.size
-#     if width > height:
-#         left_possible = max(cx - height / 2, 0)
-#         left = min(left_possible, width - height)
-#         right = left + height
-#         top = 0
-#         bottom = height
-#     else:
-#         left = 0
-#         right = width
-#         top_possible = max(cy - width / 2, 0)
-#         top = min(top_possible, height - width)
-#         bottom = top + width
+def _crop_to_square(
+    image: Image.Image, com: List[Tuple[int, int]], resize_to: Optional[int] = None
+):
+    cx, cy = com
+    width, height = image.size
+    if width > height:
+        left_possible = max(cx - height / 2, 0)
+        left = min(left_possible, width - height)
+        right = left + height
+        top = 0
+        bottom = height
+    else:
+        left = 0
+        right = width
+        top_possible = max(cy - width / 2, 0)
+        top = min(top_possible, height - width)
+        bottom = top + width
 
-#     image = image.crop((left, top, right, bottom))
+    image = image.crop((left, top, right, bottom))
 
-#     if resize_to:
-#         image = image.resize((resize_to, resize_to), Image.Resampling.LANCZOS)
+    if resize_to:
+        image = image.resize((resize_to, resize_to), Image.Resampling.LANCZOS)
 
-#     return image
+    return image
 
 
 # def _center_of_mass(mask: Image.Image):
@@ -212,8 +214,12 @@ class Predictor(BasePredictor):
         ),
         blur_amount: float = Input(description="Blur to apply to mask", default=0.0),
         bias: float = Input(description="Bias to apply to mask (lightens background)", ge=0.0, le=255.0, default=0.0),
+        output_transparent_image: bool = Input(description="if true, outputs face image with transparent background", default=False),
+        # output_cropped_image: bool = Input(description="if true, outputs image cropped to face", default=False)
     ) -> List[Path]:
         """Run a single prediction on the model"""
+
+        output_cropped_image = False
 
         tmp_in_dir = tempfile.mkdtemp()
 
@@ -275,23 +281,46 @@ class Predictor(BasePredictor):
             images=images, blur_amount=blur_amount, bias=bias
         )
 
-        # coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
-        # # based on the center of mass, crop the image to a square
-        # images = [
-        #     _crop_to_square(image, com, resize_to=None)
-        #     for image, com in zip(images, coms)
-        # ]
-        # seg_masks = [
-        #     _crop_to_square(mask, com, resize_to=None)
-        #     for mask, com in zip(seg_masks, coms)
-        # ]
+        # if output_transparent_image or output_cropped_image:
+        #     coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
+        #     # based on the center of mass, crop the image to a square
+        #     images = [
+        #         _crop_to_square(image, com, resize_to=None)
+        #         for image, com in zip(images, coms)
+        #     ]
+        #     seg_masks = [
+        #         _crop_to_square(mask, com, resize_to=None)
+        #         for mask, com in zip(seg_masks, coms)
+        #     ]
+        
+        if output_transparent_image:
+            # TODO: Not a great way of dealing with multiple faces in one image
+            tmp_images = []
+            for i, image in enumerate(images):
+                for j, seg_mask in enumerate(seg_masks[i]):
+                    arr = np.array(image.convert('RGBA'))
+                    arr[:,:,3] = np.array(seg_mask.convert('L'))
+                    tmp_images.append(Image.fromarray(arr))
+            images = tmp_images
 
-        mask_paths = []
-        for idx, mask in enumerate(seg_masks):
-            mask_file = f"{idx}.mask.png"
+        if output_cropped_image or output_transparent_image:
+            im_paths = []
+            for idx, im in enumerate(images):
+                im_file = f"{idx}.image.png"
 
-            mask_path = os.path.join(tmp_out_dir, mask_file)
-            mask_paths.append(Path(mask_path))
-            mask.save(mask_path)
+                im_file = os.path.join(tmp_out_dir, im_file)
+                im_paths.append(Path(im_file))
+                im.save(im_file)
+            return im_paths
 
-        return mask_paths
+        else:
+            mask_paths = []
+            for i, mask_list in enumerate(seg_masks):
+                for j, mask in enumerate(mask_list):
+                    mask_file = f"{i}_{j}.mask.png"
+
+                    mask_path = os.path.join(tmp_out_dir, mask_file)
+                    mask_paths.append(Path(mask_path))
+                    mask.save(mask_path)
+
+            return mask_paths
