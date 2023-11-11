@@ -14,7 +14,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from cog import BasePredictor, Input, Path
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 def face_mask_google_mediapipe(
@@ -206,7 +206,12 @@ class Predictor(BasePredictor):
         # self.model = torch.load("./weights.pth")
 
     def predict(
-        self, images: Path = Input(description="Input image as png or jpeg, or zip/tar of input images")
+        self,
+        images: Path = Input(
+            description="Input image as png or jpeg, or zip/tar of input images"
+        ),
+        blur_amount: float = Input(description="Blur to apply to mask", default=0.0),
+        bias: float = Input(description="Bias to apply to mask (lightens background)", ge=0.0, le=255.0, default=0.0),
     ) -> List[Path]:
         """Run a single prediction on the model"""
 
@@ -266,7 +271,9 @@ class Predictor(BasePredictor):
                 print("Image files: ", files)
             images = [Image.open(file).convert("RGB") for file in files]
 
-        seg_masks = face_mask_google_mediapipe(images=images)
+        seg_masks = face_mask_google_mediapipe(
+            images=images, blur_amount=blur_amount, bias=bias
+        )
 
         # coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
         # # based on the center of mass, crop the image to a square
