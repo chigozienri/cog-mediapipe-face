@@ -1,6 +1,6 @@
 # mediapipe face detection Cog model
 
-This is an implementation of the [mediapipe's face detection](https://developers.google.com/mediapipe/solutions/vision/face_landmarker) as a Cog model. [Cog packages machine learning models as standard containers.](https://github.com/replicate/cog).
+This is an implementation of the [mediapipe's face detection](https://developers.google.com/mediapipe/solutions/vision/face_landmarker) as a Cog model. [Cog packages machine learning models as standard containers](https://github.com/replicate/cog)
 
 It allows batch or individual face detection, and outputs a mask of the face position(s)
 
